@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
 #include <vector>
 #include <xsimd/xsimd.hpp>
@@ -93,16 +94,22 @@ public:
   }
 
   inline T &get(uint32_t y, uint32_t x, uint32_t c, uint32_t k = 0) {
-    if (x >= size.x || y >= size.y || c >= size.c || k >= size.k)
+    if (x >= size.x || y >= size.y || c >= size.c || k >= size.k) {
+      std::cout << x << " " << y << " " << c << " " << k << "\n";
+      std::cout << size.x << " " << size.y << " " << size.c << " " << size.k << "\n";
       throw std::range_error("Accessing tensor out of range");
+    }
     auto const st = stride();
     auto index = x * st.x + y * st.y + c * st.c + k * st.k;
     return owned ? owned_data_[index] : data_[index];
   }
 
   inline T get(uint32_t y, uint32_t x, uint32_t c, uint32_t k = 0) const {
-    if (x >= size.x || y >= size.y || c >= size.c || k >= size.k)
+    if (x >= size.x || y >= size.y || c >= size.c || k >= size.k) {
+      std::cout << x << " " << y << " " << c << " " << k << "\n";
+      std::cout << size.x << " " << size.y << " " << size.c << " " << size.k << "\n";
       throw std::range_error("Accessing tensor out of range");
+    }
     auto const st = stride();
     auto index = x * st.x + y * st.y + c * st.c + k * st.k;
     return owned ? owned_data_[index] : data_[index];

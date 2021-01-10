@@ -6,6 +6,8 @@
 #include <memory>
 #include <stdexcept>
 #include <type_traits>
+#include <algorithm>
+#include <limits>
 
 enum class DType { Int8, Int16, Int32, Int64, Float, Double };
 
@@ -109,11 +111,18 @@ public:
   uint32_t filter_size;
   uint32_t num_filters;
 
-  inline Conv2DLayer(const TensorSize &in_size, uint32_t filter_size,
-                     uint32_t num_filters) {}
+  inline Conv2DLayer(const TensorSize &in_size, uint32_t _filter_size,
+                     uint32_t _num_filters) :
+     Layer<T>(in_size, {in_size.y - _filter_size + 1, in_size.x - _filter_size + 1, _num_filters, in_size.k}),
+     filter_size(_filter_size),
+     num_filters(_num_filters),
+     weights_(_filter_size, _filter_size, in_size.c, _num_filters),
+     bias_(1, _num_filters, 1, 1) {}
 
   inline void set_weight(uint32_t y, uint32_t x, uint32_t c, uint32_t k,
-                         T value) {}
+                         T value) {
+     weights_(y, x, c, k) = value;
+  }
 
   inline void load_weights(const Tensor<T> &weight) override {
     weights_.load(weight);
@@ -121,7 +130,25 @@ public:
 
   inline TensorSize weights_size() const { return weights_.size; }
 
-  inline void forward(const Tensor<T> &in) override {}
+  inline void forward(const Tensor<T> &in) override {
+     auto & out = Layer<T>::out_;
+     // out(y, x, c) += in(y + yy, x + xx, c + cc) * weights_(yy, xx, cc);
+     for (uint32_t y = 0; y < out.size.y; ++y) {
+        for (uint32_t x = 0; x < out.size.x; ++x) {
+           for (uint32_t oc = 0; oc < out.size.c; ++oc) {
+              T sum = T();
+              for (uint32_t yy = 0; yy < weights_.size.y; ++yy) {
+                 for (uint32_t xx = 0; xx < weights_.size.x; ++xx) {
+                    for (uint32_t cc = 0; cc < weights_.size.c; ++cc) {
+                       sum += in(y + yy, x + xx, cc) * weights_(yy, xx, cc, oc);
+                    }
+                 }
+              }
+              out(y, x, oc) = sum + bias_(0, oc, 0);
+           }
+        }
+     }
+  }
 
   inline TensorSize weight_size() const override { return weights_.size; }
   inline TensorSize bias_size() const override { return bias_.size; }
@@ -140,9 +167,26 @@ private:
 template <typename T> class MaxPoolingLayer : public Layer<T> {
 public:
   inline explicit MaxPoolingLayer(const TensorSize &in_size,
-                                  uint32_t pool_size) {}
+                                  uint32_t _pool_size) :
+     Layer<T>(in_size, {in_size.y - _pool_size + 1, in_size.x - _pool_size + 1, in_size.c, in_size.k}),
+     pool_size_(_pool_size) {}
 
-  inline void forward(const Tensor<T> &in) override {}
+  inline void forward(const Tensor<T> &in) override {
+     auto & out = Layer<T>::out_;
+     for (uint32_t y = 0; y < out.size.y; ++y) {
+        for (uint32_t x = 0; x < out.size.x; ++x) {
+           for (uint32_t c = 0; c < out.size.c; ++c) {
+              T cur_max = std::numeric_limits<T>::min();
+              for (uint32_t yy = 0; yy < pool_size_; ++yy) {
+                 for (uint32_t xx = 0; xx < pool_size_; ++xx) {
+                    cur_max = std::max(cur_max, in(y + yy, x + xx, c));
+                 }
+              }
+              out(y, x, c) = cur_max;
+           }
+        }
+     }
+  }
 
 private:
   uint32_t pool_size_;
@@ -150,18 +194,97 @@ private:
 
 template <typename T> class FlattenLayer : public Layer<T> {
 public:
-  inline explicit FlattenLayer(const TensorSize &in_size) {}
+  inline explicit FlattenLayer(const TensorSize &in_size) : Layer<T>(in_size, {1, in_size.y * in_size.x * in_size.c, 1}) {}
 
-  inline void forward(const Tensor<T> &in) override {}
+  inline void forward(const Tensor<T> &in) override {
+     auto & out = Layer<T>::out_;
+     // std::cout << "flatten " << "\n";
+     // std::cout << "in_size " << in.size.y << " " << in.size.x << " " << in.size.c << "\n";
+     // std::cout << "out_size " << out.size.y << " " << out.size.x << " " << out.size.c << "\n";
+     // in.dump(std::cout);
+     uint32_t xx = 0, yy = 0, cc = 0;
+     for (uint32_t y = 0; y < out.size.y; ++y) {
+        for (uint32_t x = 0; x < out.size.x; ++x) {
+           for (uint32_t c = 0; c < out.size.c; ++c) {
+              if (cc >= in.size.c) {
+                 ++xx;
+                 cc = 0;
+              }
+              if (xx >= in.size.x) {
+                 ++yy;
+                 xx = 0;
+              }
+              // std::cout << "out_ind " << y << " " << x << " " << c << "\n";
+              // std::cout << "in_ind " << yy << " " << xx << " " << cc << "\n\n";
+              out(y, x, c) = in(yy, xx, cc);
+              // std::cout << "in_tensor " << in(yy, xx, cc) << " " << " end " << "\n";
+              // std::cout << "out_tensor " << out(y, x, c) << " " << " end " << "\n";
+              // std::cout << y << " " << x << " " << c << "\n";
+              // out(y, x, c) = y + x + c;
+              // out(y, x, c) = in(y, x, c);
+              // out_(0, y * x * c, 0) = in(y, x, c);
+              // out_(0, (y * in_size_.x + x) * in_size_.c + c, 0) = in(y, x, c);
+              ++cc;
+           }
+        }
+     }
+#if 0
+     auto n_out = Layer<T>::out();
+     std::cout << "out = " << "\n";
+     for (uint32_t i = 0; i < 6; i++) {
+        std::cout << n_out(0, i, 0) << " ";
+     }
+#endif
+  }
 };
 
 template <typename T> class DenseLayer : public Layer<T> {
 public:
-  inline DenseLayer(const TensorSize &in_size, uint32_t out_size) {}
+  inline DenseLayer(const TensorSize &in_size, uint32_t out_size) : 
+     Layer<T>(in_size, {in_size.y, out_size, in_size.c, in_size.k}), 
+     weights_(in_size.x, out_size, 1, 1),
+     bias_(1, out_size, 1, 1) {}
 
-  inline void set_weight(uint32_t y, uint32_t x, uint32_t c, T value) {}
+  inline void set_weight(uint32_t y, uint32_t x, uint32_t c, T value) {
+     weights_(y, x, c) = value;
+  }
 
-  inline void forward(const Tensor<T> &in) override {}
+  // Expect input to be flattened
+  // Expect dim[1] to match up between input and weights
+  inline void forward(const Tensor<T> &in) override {
+     auto & out = Layer<T>::out_;
+     for (uint32_t i = 0; i < in.size.y; ++i) {
+        for (uint32_t j = 0; j < weights_.size.x; ++j) {
+           T sum = T();
+           for (uint32_t k = 0; k < in.size.x; ++k) {
+              sum += in(i, k, 0) * weights_(k, j, 0);
+           }
+           out(i, j, 0) = sum + bias_(0, j, 0);
+        }
+     }
+  }
+#if 0
+  inline void forward(const Tensor<T> &in) override {
+     auto & out = Layer<T>::out_;
+     for (uint32_t y = 0; y < in.size.y; ++y) {
+        for (uint32_t x = 0; x < in.size.x; ++x) {
+           for (uint32_t c = 0; c < in.size.c; ++c) {
+              for (uint32_t xx = 0; xx < weights_.size.x; ++xx) {
+                 // T sum = T();
+                 for (uint32_t yy = 0; yy < weights_.size.y; ++yy) {
+                    auto cur_in = in(y, yy, c);
+                    auto cur_weight = weights_(yy, xx, 0);
+                    out(y, yy, c, xx) += cur_in * cur_weight;
+                    // sum += cur_in * cur_weight;
+                 }
+                 // out(y, x, c, xx) = sum;
+                 // out(y, x, c, xx) = sum + bias_(xx, 0, 0);
+              }
+           }
+        }
+     }
+  }
+#endif
 
   inline bool has_bias() const override { return true; }
   inline bool has_weights() const override { return true; }
@@ -198,6 +321,18 @@ template <typename T> class ReLuActivationLayer : public ActivationLayer<T> {
 public:
   inline explicit ReLuActivationLayer(const TensorSize &size)
       : ActivationLayer<T>(size) {}
+
+  inline void forward(const Tensor<T> &in) {
+     auto & out = Layer<T>::out_;
+     T zero = T();
+     for (uint32_t y = 0; y < out.size.y; ++y) {
+        for (uint32_t x = 0; x < out.size.x; ++x) {
+           for (uint32_t c = 0; c < out.size.c; ++c) {
+              out(y, x, c) = std::max(zero, in(y, x, c));
+           }
+        }
+     }
+  }
 
 protected:
   inline T activate_function(T value) override { return 0; }

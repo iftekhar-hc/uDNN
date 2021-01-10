@@ -5,7 +5,8 @@ set(CMAKE_CXX_STANDARD 14)
 
 
 add_subdirectory(extern/googletest/)
-add_subdirectory(extern/pybind11)
+# add_subdirectory(extern/pybind11)
+# include_directories(/usr/include/python2.7/)
 
 # SIMD
 
@@ -14,4 +15,4 @@ enable_testing()
 
 add_subdirectory(src)
 add_subdirectory(tests)
-add_subdirectory(python)
+# add_subdirectory(python)

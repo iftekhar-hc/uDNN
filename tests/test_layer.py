@@ -101,4 +101,5 @@ def test_conv():
 
 
 if __name__ == "__main__":
-    test_conv()
+    test_flatten()
+    # test_conv()
